@@ -22,6 +22,12 @@ instance Ord Constraint where
     (<=) :: Constraint -> Constraint -> Bool
     c1 <= c2 = c1 < c2 || c1 == c2
 
+isNegative :: Constraint -> Bool
+isNegative Ff = True
+isNegative (Constr Le m) = m <= 0
+isNegative (Constr Lt m) = m < 0
+isNegative _ = False
+
 intersectConstr :: Constraint -> Constraint -> Constraint
 intersectConstr = min
 

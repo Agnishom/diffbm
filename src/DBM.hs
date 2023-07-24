@@ -42,6 +42,13 @@ member dbm vec
         && and [ satConstr (arr dbm ! (0, j)) 0 (vec ! j) | j <- [1..varCount dbm] ]
         && and [ satConstr (arr dbm ! (i, 0)) (vec ! i) 0 | i <- [1..varCount dbm] ]
 
+-- | Given (i, j) and a constraint, check if the constraint is satisfied by the DBM.
+-- | This is equivalent to asking if (isDBMEmpty $ constrain i j constr dbm)
+satisfiesConstraint :: Int -> Int -> Constraint -> DBM -> Bool
+satisfiesConstraint i j constr dbm 
+    | canonical dbm = isNegative $ (arr dbm ! (j, i)) `addConstr` constr -- the reversal of the indices is intentional
+    | otherwise = satisfiesConstraint i j constr $ canonicalize dbm
+
 -- | is DBM1 a subset of DBM2?
 subsetDBM :: DBM -> DBM -> Bool
 subsetDBM dbm1 dbm2
@@ -52,7 +59,7 @@ subsetDBM dbm1 dbm2
 -- | is DBM empty?
 isDBMEmpty :: DBM -> Bool
 isDBMEmpty dbm
-    | canonical dbm = arr dbm ! (0, 0) == Ff
+    | canonical dbm = isNegative $ arr dbm ! (0, 0)
     | otherwise = isDBMEmpty $ canonicalize dbm
 
 -- | is DBM universal?
@@ -63,7 +70,9 @@ isDBMUniversal dbm
 
 -- | Add a constraint to a DBM.
 constrain :: Int -> Int -> Constraint -> DBM -> DBM
-constrain i j constr dbm = dbm { arr = arr dbm // [((i, j), constr)], canonical = False }
+constrain i j constr dbm
+    | arr dbm ! (i, j) <= constr = dbm -- the existing constraint is tighter, so no need to update
+    | otherwise = dbm { arr = arr dbm // [((i, j), constr)], canonical = False }
 
 {-
 
@@ -91,20 +100,35 @@ forM_ [0..n] $ \k ->
 -- | The canonicalization works in O(n^2)
 constrainCanon :: Int -> Int -> Constraint -> DBM -> DBM
 constrainCanon i j constr dbm =
+    if arr dbm ! (i, j) <= constr then dbm
+    else 
     let mat = arr dbm // [((i, j), constr)]
             & closeMany [i, j]
     in dbm { arr = mat, canonical = True }
 
 constrainCannonMany :: [((Int, Int), Constraint)] -> DBM -> DBM
 constrainCannonMany newConstrs dbm =
-    let mat = arr dbm // newConstrs
-            & closeMany (nub . join $ [[i, j] | ((i, j), _) <- newConstrs])
+    let newConstrs' = filter (\((i, j), constr) -> constr < arr dbm ! (i, j)) newConstrs
+        mat = arr dbm // newConstrs'
+            & closeMany (nub . join $ [[i, j] | ((i, j), _) <- newConstrs'])
     in dbm { arr = mat, canonical = True }
 
 -- | Let time elapse, i.e, for each i, let x_i < 0 + infinity
 -- | This is done by setting the (i, 0) entries to Tt.
 elapse :: DBM -> DBM
 elapse dbm = dbm { arr = arr dbm // [((i, 0), Tt) | i <- [1..varCount dbm]] }
+
+-- | All possible past values
+-- | Given a DBM dbm, u \in (past dbm) iff there exists some delay such that u + delay \in dbm
+-- | Sets all constrains about x_i to 0 <= x_i + 0
+past :: DBM -> DBM
+past dbm = dbm { arr = arr dbm // [((0, i), Constr Le 0) | i <- [1..varCount dbm]], canonical = False }
+
+pastCannon :: DBM -> DBM
+pastCannon dbm = 
+    let mat = arr dbm // [((0, i), Constr Le 0) | i <- [1..varCount dbm]]
+            & closePast i
+    in dbm { arr = mat, canonical = True }
 
 -- | (resetD i d) changes the dbm so that the x_i = d.
 -- | To do this, set arr[i, j] := (Le, d) `addConstr` arr[0, j]
@@ -161,5 +185,15 @@ closeMany ks mat' = runSTArray $ do
                 m_ik <- readArray mat (i, k)
                 m_kj <- readArray mat (k, j)
                 writeArray mat (i, j) $ m_ij `intersectConstr` addConstr m_ik m_kj
+    pure mat
+    where ((_, _), (_, n)) = bounds mat'
+
+closePast :: Int -> Array (Int, Int) Constraint -> Array (Int, Int) Constraint
+closePast i mat' = runSTArray $ do
+    mat <- thaw mat'
+    forM_ [1..n] $ \j -> do
+        m_ji <- readArray mat (j, i)
+        m_0i <- readArray mat (0, i)
+        writeArray mat (0, i) $ m_0i `intersectConstr` m_ji
     pure mat
     where ((_, _), (_, n)) = bounds mat'
