@@ -45,7 +45,7 @@ member dbm vec
 -- | Given (i, j) and a constraint, check if the constraint is satisfied by the DBM.
 -- | This is equivalent to asking if (isDBMEmpty $ constrain i j constr dbm)
 satisfiesConstraint :: Int -> Int -> Constraint -> DBM -> Bool
-satisfiesConstraint i j constr dbm 
+satisfiesConstraint i j constr dbm
     | canonical dbm = isNegative $ (arr dbm ! (j, i)) `addConstr` constr -- the reversal of the indices is intentional
     | otherwise = satisfiesConstraint i j constr $ canonicalize dbm
 
@@ -101,7 +101,7 @@ forM_ [0..n] $ \k ->
 constrainCanon :: Int -> Int -> Constraint -> DBM -> DBM
 constrainCanon i j constr dbm =
     if arr dbm ! (i, j) <= constr then dbm
-    else 
+    else
     let mat = arr dbm // [((i, j), constr)]
             & closeMany [i, j]
     in dbm { arr = mat, canonical = True }
@@ -125,9 +125,9 @@ past :: DBM -> DBM
 past dbm = dbm { arr = arr dbm // [((0, i), Constr Le 0) | i <- [1..varCount dbm]], canonical = False }
 
 pastCannon :: DBM -> DBM
-pastCannon dbm = 
+pastCannon dbm =
     let mat = arr dbm // [((0, i), Constr Le 0) | i <- [1..varCount dbm]]
-            & closePast i
+            & closePast
     in dbm { arr = mat, canonical = True }
 
 -- | (resetD i d) changes the dbm so that the x_i = d.
@@ -143,6 +143,34 @@ resetD d dbm i = dbm {
 -- | reset the given clock to 0
 reset :: DBM -> Int -> DBM
 reset = resetD 0
+
+-- | remove constraints on clock x
+unConstrain :: Int -> DBM -> DBM
+unConstrain x dbm =
+    dbm { arr = arr dbm //
+        join [[((x, i), Tt), ((i, x), arr dbm ! (i, 0))] | i <- [0..varCount dbm], i /= x] }
+
+-- | enforce that clock x = clock y
+copy :: Int -> Int -> DBM -> DBM
+copy x y dbm =
+    dbm { arr = arr dbm //
+            (join [[((x, i), arr dbm ! (y, i)), ((i, x), arr dbm ! (i, y))] | i <- [0..varCount dbm], i /= x] 
+            ++ [((x, y), Constr Le 0), ((y, x), Constr Le 0)])
+        }
+
+-- | shift clock x by d
+shift :: Int -> Double -> DBM -> DBM
+shift x d dbm =
+    let arr1 = arr dbm //
+            join [
+                [((x, i), Constr Le d `addConstr` (arr dbm ! (x, i)))
+                ,((i, x), Constr Le (-d) `addConstr` (arr dbm ! (i, x)))]
+                | i <- [0..varCount dbm], i /= x
+            ]
+        arr2 = arr1 //
+            [((x, 0), max (arr1 ! (x, 0)) (Constr Le 0))
+            ,((0, x), max (arr1 ! (0, x)) (Constr Le 0))]
+    in dbm { arr = arr2 }
 
 -- | Canonicalize a DBM. This runs the Floyd-Warshall algorithm on the DBM.
 canonicalize :: DBM -> DBM
@@ -188,12 +216,13 @@ closeMany ks mat' = runSTArray $ do
     pure mat
     where ((_, _), (_, n)) = bounds mat'
 
-closePast :: Int -> Array (Int, Int) Constraint -> Array (Int, Int) Constraint
-closePast i mat' = runSTArray $ do
+closePast ::Array (Int, Int) Constraint -> Array (Int, Int) Constraint
+closePast mat' = runSTArray $ do
     mat <- thaw mat'
-    forM_ [1..n] $ \j -> do
-        m_ji <- readArray mat (j, i)
-        m_0i <- readArray mat (0, i)
-        writeArray mat (0, i) $ m_0i `intersectConstr` m_ji
+    forM_ [1..n] $ \i -> do
+        forM_ [1..n] $ \j -> do
+            m_ji <- readArray mat (j, i)
+            m_0i <- readArray mat (0, i)
+            writeArray mat (0, i) $ m_0i `intersectConstr` m_ji
     pure mat
     where ((_, _), (_, n)) = bounds mat'
