@@ -60,7 +60,7 @@ library
     -- Other library packages from which modules are imported.
     build-depends:    
           base ^>=4.17.1.0
-        , array
+        , array ^>=0.5.6.0
 
     -- Directories containing source files.
     hs-source-dirs:   src
